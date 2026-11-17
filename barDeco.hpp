@@ -21,6 +21,9 @@ namespace Event {
 struct SCallbackInfo;
 }
 
+// Replaces %WINDOW% in command with the window's address.
+std::string windowCommand(std::string command, const PHLWINDOW &window);
+
 class COmarchyFloatingHyprBar : public IHyprWindowDecoration {
 public:
   COmarchyFloatingHyprBar(PHLWINDOW);

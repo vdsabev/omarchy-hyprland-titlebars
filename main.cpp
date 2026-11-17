@@ -14,13 +14,18 @@
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
 #include <hyprland/src/config/lua/types/LuaConfigColor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 
 #include <hyprutils/string/VarList.hpp>
 
 #include <algorithm>
+#include <linux/input-event-codes.h>
 
 #include "barDeco.hpp"
 #include "globals.hpp"
+#include "glide.hpp"
+#include "snap.hpp"
 
 extern "C" {
 #include <lua.h>
@@ -29,6 +34,21 @@ extern "C" {
 
 // Do NOT change this function.
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
+
+// Hyprland's own window drags, Super + drag and an app dragged by its own
+// header, end on this release too. The listener runs before Hyprland handles
+// the release, so the snap waits for the drag to have ended.
+static void onMouseButton(IPointer::SButtonEvent e) {
+  if (e.button != BTN_LEFT || e.state == WL_POINTER_BUTTON_STATE_PRESSED)
+    return;
+
+  const auto &drag = g_layoutManager->dragController();
+  if (drag->mode() != MBIND_MOVE || !drag->target())
+    return;
+
+  const PHLWINDOWREF window = drag->target()->window();
+  g_pEventLoopManager->doLater([window] { omarchyFloatingSnapToEdge(window.lock()); });
+}
 
 static void onNewWindow(PHLWINDOW window) {
   if (!window->m_X11DoesntWantBorders) {
@@ -250,6 +270,12 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
   g_pOmarchyFloatingGlobalState->config.workspaceTag =
       makeShared<Config::Values::CStringValue>("plugin:hyprbars:workspace_tag", "Restrict bars to windows with this tag", "");
+  g_pOmarchyFloatingGlobalState->config.edgeSnap = makeShared<Config::Values::CBoolValue>(
+      "plugin:hyprbars:edge_snap", "Whether a titlebar drag dropped at a screen edge or corner fills that half or quarter", false);
+  g_pOmarchyFloatingGlobalState->config.snapPreviewColor = makeShared<Config::Values::CColorValue>(
+      "plugin:hyprbars:snap_preview_color", "Color of the area edge_snap previews during a drag", 0x80000000);
+  g_pOmarchyFloatingGlobalState->config.onDropBottom = makeShared<Config::Values::CStringValue>(
+      "plugin:hyprbars:on_drop_bottom", "Action to execute when edge_snap drops a workspace's only window at the bottom edge", "");
 
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.barColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.textColor);
@@ -272,8 +298,11 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.buttonBorderColor);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.enabled);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.workspaceTag);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.edgeSnap);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.iconOnHover);
   HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDoubleClick);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.onDropBottom);
+  HyprlandAPI::addConfigValueV2(OMARCHY_FLOATING_PHANDLE, g_pOmarchyFloatingGlobalState->config.snapPreviewColor);
 
   if (Config::mgr()->type() == Config::CONFIG_LEGACY)
     HyprlandAPI::addConfigKeyword(OMARCHY_FLOATING_PHANDLE, "plugin:hyprbars:hyprbars-button", onNewOmarchyFloatingButton, Hyprlang::SHandlerOptions{});
@@ -281,6 +310,15 @@ static PLUGIN_DESCRIPTION_INFO initializeOmarchyFloating(HANDLE handle) {
     HyprlandAPI::addLuaFunction(OMARCHY_FLOATING_PHANDLE, "hyprbars", "add_button", ::newOmarchyFloatingLuaButton);
   static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
   static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
+  static auto P6 = Event::bus()->m_events.input.mouse.button.listen([&](IPointer::SButtonEvent e, Event::SCallbackInfo &) { onMouseButton(e); });
+  static auto P7 = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D coords, Event::SCallbackInfo &) {
+    omarchyFloatingNoticeDrag();
+    omarchyFloatingUpdateSnapPreview(coords);
+  });
+  static auto P8 = Event::bus()->m_events.render.stage.listen([&](eRenderStage stage) {
+    omarchyFloatingDrawSnapPreview(stage);
+    omarchyFloatingUpdateGlide(stage);
+  });
 
   // add deco to existing windows
   for (auto &w : Desktop::windowState()->windows()) {

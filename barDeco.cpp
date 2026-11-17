@@ -1,4 +1,5 @@
 #include "barDeco.hpp"
+#include "glide.hpp"
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
@@ -28,6 +29,7 @@
 #include "BarPassElement.hpp"
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include "appName.hpp"
+#include "snap.hpp"
 
 #include <algorithm>
 #include <climits>
@@ -36,7 +38,7 @@ using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) { return CHyprColor{static_cast<uint64_t>(color)}; }
 
-static std::string windowCommand(std::string command, const PHLWINDOW &window) {
+std::string windowCommand(std::string command, const PHLWINDOW &window) {
   // Resolve the decoration owner synchronously. An asynchronously spawned
   // command must not choose its target from whatever happens to be focused.
   constexpr std::string_view token = "%WINDOW%";
@@ -308,10 +310,13 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
   m_bCancelledDown = false;
 
   if (m_bDraggingThis) {
+    const bool MOVING = !m_bTouchEv && g_layoutManager->dragController()->mode() == MBIND_MOVE;
     g_pKeybindManager->changeMouseBindMode(MBIND_INVALID);
     m_bDraggingThis = false;
     if (m_bTouchEv)
       (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
+    else if (MOVING)
+      omarchyFloatingSnapToEdge(m_pWindow.lock());
 
     Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }
@@ -332,12 +337,12 @@ void COmarchyFloatingHyprBar::handleMovement() {
     Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_NONE);
 
   if (maximized) {
+    omarchyFloatingGlideFrom(window, {window->positionAnimation()->value(), window->sizeAnimation()->value()});
     auto box = window->layoutTarget()->position();
     const auto reserved = window->getFullWindowReservedArea();
     box.x = cursor.x - box.w * anchor;
     box.y = cursor.y + reserved.topLeft.y - offset;
     g_layoutManager->setTargetGeom(box, window->layoutTarget());
-    window->layoutTarget()->warpPositionSize();
   }
   g_pKeybindManager->changeMouseBindMode(MBIND_MOVE);
   m_bDraggingThis = true;

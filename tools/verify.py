@@ -186,6 +186,74 @@ end
     assert top['size'] == original['size'] and top['fullscreen'] == 0, top
     print('PASS: real pointer titlebar drags move the window to any edge without snapping', flush=True)
 
+    # Snapped areas hold the whole window: 2px border and 30px titlebar around
+    # the content, 8px gaps_out from the monitor and 8px gaps_in per side.
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { edge_snap = true } } })')
+    for drop, at, size in [((1, 360), [10, 40], [620, 750]), ((1279, 799), [650, 440], [620, 350])]:
+      snapped = drag_to(*drop)
+      assert snapped['at'] == at and snapped['size'] == size, (drop, snapped['at'], snapped['size'])
+    capture('snapped-corner')
+
+    # A workspace's only window maximizes at the top edge and runs
+    # on_drop_bottom at the bottom one.
+    assert drag_to(650, 1)['fullscreen'] == 1, client()
+    ctl('dispatch', 'hl.dsp.window.fullscreen({ mode = "maximized", action = "unset" })')
+    ctl('eval', """hl.config({ plugin = { hyprbars = { on_drop_bottom = [[hyprctl dispatch 'hl.dsp.window.tag({ tag = "+dropped-bottom", window = "address:%WINDOW%" })']] } } })""")
+    drag_to(650, 799)
+    time.sleep(.5)
+    assert 'dropped-bottom' in client()['tags'], client()
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { on_drop_bottom = "" } } })')
+    ctl('dispatch', 'hl.dsp.window.center()')
+    time.sleep(.3)
+    print('PASS: with edge_snap, an only window maximizes at the top and runs on_drop_bottom at the bottom', flush=True)
+
+    # A drag Hyprland runs itself, as Super + drag and an app's own header do,
+    # snaps too. A plain left-button drag bind stands in for Super, which the
+    # virtual pointer cannot hold.
+    ctl('eval', 'hl.bind("mouse:272", hl.dsp.window.drag(), { mouse = true })')
+    window = client()
+    x, y = window['at'][0] + window['size'][0] // 2, window['at'][1] + window['size'][1] // 2
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    for i in range(1, 21):
+      commands += [f'move {round(x + (1279 - x) * i / 20)} {y}', 'wait 20']
+    pointer(commands + ['wait 100', 'up'])
+    ctl('eval', 'hl.unbind("mouse:272")')
+    snapped = client()
+    assert snapped['at'] == [650, 40] and snapped['size'] == [620, 750], (snapped['at'], snapped['size'])
+    print('PASS: with edge_snap, a drag Hyprland runs itself snaps the same way', flush=True)
+
+    # Held at the left edge, the drag previews the left half. The sampled point
+    # lies in that half but clear of the dragged window.
+    def pixel(x, y):
+      monitor = json.loads(ctl('monitors', '-j'))[0]['name']
+      ppm = subprocess.run(['grim', '-t', 'ppm', '-o', monitor, '-'], env=env, check=True, capture_output=True).stdout
+      width = int(ppm.split(b'\n', 3)[1].split()[0])
+      start = len(ppm) - 3 * width * int(ppm.split(b'\n', 3)[1].split()[1])
+      return sum(ppm[start + 3 * (y * width + x):start + 3 * (y * width + x) + 3])
+    background = pixel(500, 200)
+    window = client()
+    x, y = window['at'][0] + 220, window['at'][1] - 15
+    commands = [f'move {x} {y}', 'wait 100', 'down', 'wait 120']
+    for i in range(1, 21):
+      commands += [f'move {round(x + (1 - x) * i / 20)} {round(y + (360 - y) * i / 20)}', 'wait 20']
+    held = subprocess.Popen([str(scratch / 'pointer'), '1280', '800'], stdin=subprocess.PIPE, text=True, env=env)
+    held.stdin.write('\n'.join(commands + ['wait 1500', 'up']) + '\n')
+    held.stdin.close()
+    time.sleep(1.3)
+    previewed = pixel(500, 200)
+    capture('snap-preview')
+    held.wait(timeout=10)
+    time.sleep(.3)
+    assert previewed < background - 15, (background, previewed)
+    assert client()['at'] == [10, 40], client()['at']
+    print('PASS: with edge_snap, a drag previews the area it will fill', flush=True)
+
+    ctl('eval', 'hl.config({ plugin = { hyprbars = { edge_snap = false } } })')
+    ctl('dispatch', f'hl.dsp.window.resize({{ x = {original["size"][0]}, y = {original["size"][1]} }})')
+    ctl('dispatch', 'hl.dsp.window.center()')
+    time.sleep(.3)
+    print('PASS: with edge_snap, titlebar drops at edges and corners fill that half or quarter inside the gaps', flush=True)
+
     window = client()
     x, y = window['at'][0] + 120, window['at'][1] - 15
     pointer([f'move {x} {y}', 'wait 450', 'down', 'up', 'wait 100', 'down', 'up'])

@@ -30,7 +30,7 @@ struct SOmarchyFloatingGlobalState {
   uint32_t titleColorRuleIdx = 0;
 
   struct {
-    SP<Config::Values::CColorValue> barColor, textColor, inactiveBarColor, inactiveButtonColor, buttonBorderColor;
+    SP<Config::Values::CColorValue> barColor, textColor, inactiveBarColor, inactiveButtonColor, buttonBorderColor, snapPreviewColor;
     SP<Config::Values::CIntValue> barHeight;
     SP<Config::Values::CIntValue> barTextSize;
     SP<Config::Values::CFontWeightValue> barTextWeight;
@@ -38,8 +38,8 @@ struct SOmarchyFloatingGlobalState {
     SP<Config::Values::CIntValue> barButtonPadding;
     SP<Config::Values::CIntValue> buttonRounding;
     SP<Config::Values::CIntValue> buttonBorderSize;
-    SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover;
-    SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, workspaceTag;
+    SP<Config::Values::CBoolValue> barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, edgeSnap;
+    SP<Config::Values::CStringValue> barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick, onDropBottom, workspaceTag;
   } config;
 };
 

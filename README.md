@@ -25,6 +25,9 @@ These are in addition to the upstream `plugin.hyprbars` titlebar settings.
 | `enabled` | false | Upstream defaults to true. Off here, so a plugin left loaded after the config stops configuring it draws nothing. |
 | `bar_color_inactive` | transparent | Inactive titlebar color; transparent falls back to `bar_color`. |
 | `workspace_tag` | empty | When set, titlebars apply only to floating windows with this tag. Removing the tag or tiling the window immediately releases titlebar space. |
+| `edge_snap` | false | A window dragged to an edge fills that half of the screen, and to a corner that quarter, inside the gaps. A workspace's only window maximizes at the top edge. |
+| `snap_preview_color` | `0x80000000` | Color of the area a drag will fill, shown until the drop. |
+| `on_drop_bottom` | empty | With `edge_snap`, runs when a workspace's only window is dropped at the bottom edge; may contain `%WINDOW%`. |
 
 ## Titles
 
