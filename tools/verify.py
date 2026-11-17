@@ -30,6 +30,9 @@ with tempfile.TemporaryDirectory(prefix='oht-') as scratch:
   config = scratch / 'hyprland.lua'
   config.write_text('''
 hl.monitor({ output = "", mode = "1280x800@60", position = "0x0", scale = 1 })
+-- The parent's pointer and keyboard, which would mix into the virtual pointer's gestures.
+hl.device({ name = "wl_pointer", enabled = false })
+hl.device({ name = "wl_keyboard", enabled = false })
 hl.config({ general = { gaps_in = 8, gaps_out = 8, border_size = 2, resize_on_border = true }, animations = { enabled = false }, input = { follow_mouse = 0 }, misc = { disable_hyprland_logo = true, disable_splash_rendering = true } })
 hl.window_rule({ name = "test-float", match = { class = ".*" }, float = true, size = { 600, 400 }, center = true })
 local unconfigured = io.open("UNCONFIGURED", "r")
@@ -48,6 +51,18 @@ end
     raise RuntimeError('Verification expects exactly one parent compositor')
   parent_signature = parent_instances[0]['instance']
   parent_display = str(Path(os.environ['XDG_RUNTIME_DIR']) / parent_instances[0]['wl_socket'])
+
+  # The compositor is a window in the parent session, kept on a hidden special
+  # workspace without focus so it stays out of the user's way; render_unfocused
+  # keeps it drawing there. A Lua global holds the rule to switch it off after.
+  def parent_eval(lua):
+    result = subprocess.run(['hyprctl', 'eval', lua], capture_output=True, text=True, timeout=5, check=True)
+    if result.stdout.strip() != 'ok':
+      raise RuntimeError(result.stdout)
+  parent_eval('''oht_verify_rule = oht_verify_rule or hl.window_rule({ name = "oht-verify", match = { class = "^aquamarine$" },
+    workspace = "special:oht-verify silent", no_initial_focus = true, render_unfocused = true })
+  oht_verify_rule:set_enabled(true)''')
+
   env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
   env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
   log = (args.artifacts / 'compositor.log').open('w')
@@ -196,8 +211,14 @@ end
 
     # A workspace's only window maximizes at the top edge and runs
     # on_drop_bottom at the bottom one.
+    # Unmaximized, it is back where the drag started rather than where it was
+    # dropped, half off the top of the screen.
+    before = client()
     assert drag_to(650, 1)['fullscreen'] == 1, client()
     ctl('dispatch', 'hl.dsp.window.fullscreen({ mode = "maximized", action = "unset" })')
+    time.sleep(.3)
+    restored = client()
+    assert restored['at'] == before['at'] and restored['size'] == before['size'], (before['at'], before['size'], restored['at'], restored['size'])
     ctl('eval', """hl.config({ plugin = { hyprbars = { on_drop_bottom = [[hyprctl dispatch 'hl.dsp.window.tag({ tag = "+dropped-bottom", window = "address:%WINDOW%" })']] } } })""")
     drag_to(650, 799)
     time.sleep(.5)
@@ -327,3 +348,4 @@ end
       compositor.kill()
       compositor.wait()
     log.close()
+    parent_eval('oht_verify_rule:set_enabled(false)')
