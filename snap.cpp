@@ -98,17 +98,44 @@ SDrop dropAt(const PHLWINDOW &window, const Vector2D &cursor) {
 }
 
 // The preview is drawn where these are, moving from the dragged window to the
-// drop like the window itself would.
+// drop like the window itself would. When the drop goes away it shrinks back
+// over g_leaveProgress, into the window as it moves on. It fades in and out
+// alongside, as a fraction of snap_preview_color's own opacity.
 PHLANIMVAR<Vector2D> g_previewPosition;
 PHLANIMVAR<Vector2D> g_previewSize;
+PHLANIMVAR<float> g_previewOpacity;
+PHLANIMVAR<float> g_leaveProgress;
+bool g_previewIsLeaving = false;
+CBox g_leftFrom;
+PHLWINDOWREF g_previewWindow;
+PHLMONITORREF g_previewMonitor;
 CBox g_previewDrawn;
 
-CBox previewBox() { return {g_previewPosition->value(), g_previewSize->value()}; }
+CBox windowBox(const PHLWINDOW &window) {
+  const auto reserved = window->getFullWindowReservedArea();
+  return {window->positionAnimation()->value() - reserved.topLeft, window->sizeAnimation()->value() + reserved.topLeft + reserved.bottomRight};
+}
+
+CBox previewBox() {
+  const auto window = g_previewWindow.lock();
+  if (!window || !g_previewIsLeaving)
+    return {g_previewPosition->value(), g_previewSize->value()};
+
+  const auto to = windowBox(window);
+  const float progress = g_leaveProgress->value();
+  return {g_leftFrom.pos() + (to.pos() - g_leftFrom.pos()) * progress, g_leftFrom.size() + (to.size() - g_leftFrom.size()) * progress};
+}
 
 void damagePreview() {
   g_pHyprRenderer->damageBox(g_previewDrawn);
-  g_previewDrawn = previewBox();
+  g_previewDrawn = g_previewWindow ? previewBox() : CBox{};
   g_pHyprRenderer->damageBox(g_previewDrawn);
+}
+
+void hidePreview() {
+  g_previewWindow.reset();
+  g_previewIsLeaving = false;
+  damagePreview();
 }
 
 void showDrop(const PHLWINDOW &window, const SDrop &drop) {
@@ -121,22 +148,41 @@ void showDrop(const PHLWINDOW &window, const SDrop &drop) {
     Animation::mgr()->createAnimation(Vector2D{}, g_previewSize, config, AVARDAMAGE_NONE);
     g_previewPosition->setUpdateCallback([](auto) { damagePreview(); });
     g_previewSize->setUpdateCallback([](auto) { damagePreview(); });
+    Animation::mgr()->createAnimation(0.F, g_previewOpacity, config, AVARDAMAGE_NONE);
+    g_previewOpacity->setUpdateCallback([](auto) { damagePreview(); });
+    Animation::mgr()->createAnimation(0.F, g_leaveProgress, config, AVARDAMAGE_NONE);
+    g_leaveProgress->setUpdateCallback([](auto) { damagePreview(); });
+    g_leaveProgress->setCallbackOnEnd(
+        [](auto) {
+          if (g_previewIsLeaving)
+            hidePreview();
+        },
+        false);
   }
 
-  const bool wasShown = !g_drop.area.empty();
   g_dragged = window;
   g_drop = drop;
+  const auto shown = g_previewWindow.lock();
   if (g_drop.area.empty()) {
-    g_pHyprRenderer->damageBox(g_previewDrawn);
-    g_previewDrawn = {};
+    if (shown && !g_previewIsLeaving) {
+      g_leftFrom = previewBox();
+      g_leaveProgress->setValueAndWarp(0.F);
+      g_previewIsLeaving = true;
+      *g_leaveProgress = 1.F;
+      *g_previewOpacity = 0.F;
+    }
     return;
   }
 
-  if (!wasShown) {
-    const auto reserved = window->getFullWindowReservedArea();
-    g_previewPosition->setValueAndWarp(window->positionAnimation()->value() - reserved.topLeft);
-    g_previewSize->setValueAndWarp(window->sizeAnimation()->value() + reserved.topLeft + reserved.bottomRight);
-  }
+  const auto from = shown == window ? previewBox() : windowBox(window);
+  g_previewPosition->setValueAndWarp(from.pos());
+  g_previewSize->setValueAndWarp(from.size());
+  if (shown != window)
+    g_previewOpacity->setValueAndWarp(0.F);
+  *g_previewOpacity = 1.F;
+  g_previewIsLeaving = false;
+  g_previewWindow = window;
+  g_previewMonitor = g_drop.monitor;
   *g_previewPosition = g_drop.area.pos();
   *g_previewSize = g_drop.area.size();
   damagePreview();
@@ -151,14 +197,14 @@ void omarchyFloatingUpdateSnapPreview(const Vector2D &cursor) {
 }
 
 void omarchyFloatingDrawSnapPreview(eRenderStage stage) {
-  if (stage != RENDER_PRE_WINDOW || g_drop.area.empty())
+  if (stage != RENDER_PRE_WINDOW)
     return;
 
   // Drawn just before the dragged window, so it covers the others but not it.
   const auto &renderData = g_pHyprRenderer->m_renderData;
-  const auto window = g_dragged.lock();
+  const auto window = g_previewWindow.lock();
   const auto monitor = renderData.pMonitor.lock();
-  if (!window || renderData.currentWindow.lock() != window || !monitor || monitor != g_drop.monitor.lock())
+  if (!window || renderData.currentWindow.lock() != window || !monitor || monitor != g_previewMonitor.lock())
     return;
 
   CBox box = previewBox();
@@ -166,6 +212,7 @@ void omarchyFloatingDrawSnapPreview(eRenderStage stage) {
   CRectPassElement::SRectData data;
   data.box = box;
   data.color = CHyprColor{static_cast<uint64_t>(g_pOmarchyFloatingGlobalState->config.snapPreviewColor->value())};
+  data.color.a *= g_previewOpacity->value();
   data.round = window->rounding() * monitor->m_scale;
   data.roundingPower = window->roundingPower();
   g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
@@ -177,6 +224,10 @@ void omarchyFloatingSnapToEdge(PHLWINDOW window) {
 
   const auto drop = g_drop;
   showDrop(nullptr, {});
+  // The window itself moves into the area, so the preview has nothing to
+  // shrink back into.
+  if (drop.kind != eDrop::NONE)
+    hidePreview();
   if (!isSnappable(window))
     return;
 
