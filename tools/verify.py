@@ -54,14 +54,17 @@ end
 
   # The compositor is a window in the parent session, kept on a hidden special
   # workspace without focus so it stays out of the user's way; render_unfocused
-  # keeps it drawing there. A Lua global holds the rule to switch it off after.
+  # keeps it drawing there. It floats at the monitor's size because its monitor
+  # takes the window's size, and a tiled window would resize it mid-run. A Lua
+  # global holds the rule to switch it off after.
   def parent_eval(lua):
     result = subprocess.run(['hyprctl', 'eval', lua], capture_output=True, text=True, timeout=5, check=True)
     if result.stdout.strip() != 'ok':
       raise RuntimeError(result.stdout)
-  parent_eval('''oht_verify_rule = oht_verify_rule or hl.window_rule({ name = "oht-verify", match = { class = "^aquamarine$" },
-    workspace = "special:oht-verify silent", no_initial_focus = true, render_unfocused = true })
-  oht_verify_rule:set_enabled(true)''')
+  parent_eval('''oht_verify_floating_rule = oht_verify_floating_rule or hl.window_rule({ name = "oht-verify-floating",
+    match = { class = "^aquamarine$" }, workspace = "special:oht-verify silent", float = true, size = { 1280, 800 },
+    no_initial_focus = true, render_unfocused = true })
+  oht_verify_floating_rule:set_enabled(true)''')
 
   env = dict(os.environ, XDG_RUNTIME_DIR=str(scratch), AQ_BACKEND='wayland', WAYLAND_DISPLAY=parent_display, HYPRLAND_NO_SD_NOTIFY='1', HYPRLAND_NO_SD_VARS='1')
   env.pop('HYPRLAND_INSTANCE_SIGNATURE', None)
@@ -85,6 +88,9 @@ end
     return json.loads(ctl('clients', '-j'))[0]
 
   def pointer(commands):
+    # The virtual pointer maps its coordinates onto a 1280x800 monitor.
+    monitor = json.loads(ctl('monitors', '-j'))[0]
+    assert (monitor['width'], monitor['height']) == (1280, 800), (monitor['width'], monitor['height'])
     subprocess.run([str(scratch / 'pointer'), '1280', '800'], input='\n'.join(commands) + '\n', text=True, env=env, check=True, timeout=10)
     time.sleep(.15)
 
@@ -348,4 +354,4 @@ end
       compositor.kill()
       compositor.wait()
     log.close()
-    parent_eval('oht_verify_rule:set_enabled(false)')
+    parent_eval('oht_verify_floating_rule:set_enabled(false)')
