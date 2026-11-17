@@ -316,7 +316,7 @@ void COmarchyFloatingHyprBar::handleUpEvent(Event::SCallbackInfo &info) {
     if (m_bTouchEv)
       (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
     else if (MOVING)
-      omarchyFloatingSnapToEdge(m_pWindow.lock());
+      omarchyFloatingTakeDrop(m_pWindow.lock())();
 
     Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
   }

@@ -17,6 +17,8 @@
 #include "barDeco.hpp"
 #include "globals.hpp"
 
+#include <optional>
+
 namespace {
 
 enum class eDrop { NONE, AREA, MAXIMIZE, MINIMIZE };
@@ -228,38 +230,43 @@ void omarchyFloatingDrawSnapPreview(eRenderStage stage) {
   g_pHyprRenderer->m_renderPass.add(makeUnique<CRectPassElement>(data));
 }
 
-void omarchyFloatingSnapToEdge(PHLWINDOW window) {
+std::function<void()> omarchyFloatingTakeDrop(PHLWINDOW window) {
   if (!window || g_dragged.lock() != window)
-    return;
+    return [] {};
 
   const auto drop = g_drop;
+  const std::optional<CBox> dragStartBox = g_dragStarted.lock() == window ? std::optional{g_dragStartBox} : std::nullopt;
   showDrop(nullptr, {});
   // The window itself moves into the area, so the preview has nothing to
   // shrink back into.
   if (drop.kind != eDrop::NONE)
     hidePreview();
-  if (!isSnappable(window))
-    return;
 
-  switch (drop.kind) {
-  case eDrop::NONE:
-    return;
-  case eDrop::MAXIMIZE:
-    // Unmaximizing restores the box the window was maximized from, which
-    // would otherwise be the drop, half off the top of the screen.
-    if (g_dragStarted.lock() == window)
-      g_layoutManager->setTargetGeom(g_dragStartBox, window->layoutTarget());
-    Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_MAXIMIZED);
-    return;
-  case eDrop::MINIMIZE:
-    Config::Supplementary::executor()->spawn(windowCommand(g_pOmarchyFloatingGlobalState->config.onDropBottom->value(), window));
-    return;
-  case eDrop::AREA: {
-    const auto reserved = window->getFullWindowReservedArea();
-    const CBox box = {drop.area.x + reserved.topLeft.x, drop.area.y + reserved.topLeft.y, drop.area.w - reserved.topLeft.x - reserved.bottomRight.x,
-                      drop.area.h - reserved.topLeft.y - reserved.bottomRight.y};
-    g_layoutManager->setTargetGeom(box, window->layoutTarget());
-    Log::logger->log(Log::DEBUG, "[hyprbars] Snapped {:x} to {} {} {}x{}", (uintptr_t)window.get(), box.x, box.y, box.w, box.h);
-  }
-  }
+  return [windowRef = PHLWINDOWREF{window}, drop, dragStartBox] {
+    const auto window = windowRef.lock();
+    if (!window || !isSnappable(window))
+      return;
+
+    switch (drop.kind) {
+    case eDrop::NONE:
+      return;
+    case eDrop::MAXIMIZE:
+      // Unmaximizing restores the box the window was maximized from, which
+      // would otherwise be the drop, half off the top of the screen.
+      if (dragStartBox)
+        g_layoutManager->setTargetGeom(*dragStartBox, window->layoutTarget());
+      Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_MAXIMIZED);
+      return;
+    case eDrop::MINIMIZE:
+      Config::Supplementary::executor()->spawn(windowCommand(g_pOmarchyFloatingGlobalState->config.onDropBottom->value(), window));
+      return;
+    case eDrop::AREA: {
+      const auto reserved = window->getFullWindowReservedArea();
+      const CBox box = {drop.area.x + reserved.topLeft.x, drop.area.y + reserved.topLeft.y, drop.area.w - reserved.topLeft.x - reserved.bottomRight.x,
+                        drop.area.h - reserved.topLeft.y - reserved.bottomRight.y};
+      g_layoutManager->setTargetGeom(box, window->layoutTarget());
+      Log::logger->log(Log::DEBUG, "[hyprbars] Snapped {:x} to {} {} {}x{}", (uintptr_t)window.get(), box.x, box.y, box.w, box.h);
+    }
+    }
+  };
 }

@@ -46,8 +46,7 @@ static void onMouseButton(IPointer::SButtonEvent e) {
   if (drag->mode() != MBIND_MOVE || !drag->target())
     return;
 
-  const PHLWINDOWREF window = drag->target()->window();
-  g_pEventLoopManager->doLater([window] { omarchyFloatingSnapToEdge(window.lock()); });
+  g_pEventLoopManager->doLater(omarchyFloatingTakeDrop(drag->target()->window()));
 }
 
 static void onNewWindow(PHLWINDOW window) {
