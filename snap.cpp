@@ -35,6 +35,10 @@ struct SDrop {
 PHLWINDOWREF g_dragged;
 SDrop g_drop;
 
+// Where the window was when its current drag started.
+PHLWINDOWREF g_dragStarted;
+CBox g_dragStartBox;
+
 bool isSnappable(const PHLWINDOW &window) {
   if (!g_pOmarchyFloatingGlobalState->config.edgeSnap->value() || !validMapped(window) || !window->m_isFloating)
     return false;
@@ -193,6 +197,12 @@ void showDrop(const PHLWINDOW &window, const SDrop &drop) {
 void omarchyFloatingUpdateSnapPreview(const Vector2D &cursor) {
   const auto &drag = g_layoutManager->dragController();
   const PHLWINDOW window = drag->mode() == MBIND_MOVE && drag->target() ? drag->target()->window() : nullptr;
+  if (!window)
+    g_dragStarted.reset();
+  else if (g_dragStarted.lock() != window) {
+    g_dragStarted = window;
+    g_dragStartBox = window->layoutTarget()->position();
+  }
   showDrop(window, window && isSnappable(window) ? dropAt(window, cursor) : SDrop{});
 }
 
@@ -235,6 +245,10 @@ void omarchyFloatingSnapToEdge(PHLWINDOW window) {
   case eDrop::NONE:
     return;
   case eDrop::MAXIMIZE:
+    // Unmaximizing restores the box the window was maximized from, which
+    // would otherwise be the drop, half off the top of the screen.
+    if (g_dragStarted.lock() == window)
+      g_layoutManager->setTargetGeom(g_dragStartBox, window->layoutTarget());
     Fullscreen::controller()->setFullscreenMode(window, Fullscreen::FSMODE_MAXIMIZED);
     return;
   case eDrop::MINIMIZE:
